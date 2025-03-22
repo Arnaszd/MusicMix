@@ -4,7 +4,7 @@ import librosa
 import soundfile as sf
 import numpy as np
 import tkinter as tk
-from tkinter import filedialog, ttk, messagebox, Text, Scrollbar
+from tkinter import filedialog, ttk, messagebox, Text, Scrollbar, Listbox
 from pathlib import Path
 from pydub import AudioSegment
 from pydub import silence as pydub_silence
@@ -112,25 +112,450 @@ class CustomEntry(tk.Frame):
                             bd=10)
         self.entry.pack(fill='both', expand=True)
 
+class ModernSongSelector(tk.Toplevel):
+    def __init__(self, parent, input_folder, selected_callback, current_selected_songs=None):
+        super().__init__(parent)
+        self.title("Song Selection")
+        self.parent = parent
+        self.input_folder = input_folder
+        self.selected_callback = selected_callback
+        
+        # Variables
+        self.all_songs = []  # all mp3 files in folder
+        self.selected_songs = []  # selected songs
+        self.previously_selected_songs = current_selected_songs or []  # store previously selected songs
+        
+        # Set window state to maximized
+        self.state('zoomed')
+        self.configure(bg='#000000')
+        
+        # Create starry background like the main page
+        self.background = StarryBackground(self)
+        self.background.place(relwidth=1, relheight=1)
+        
+        # Create UI
+        self.create_widgets()
+        
+        # Load songs
+        self.load_songs()
+        
+        # Restore previously selected songs if any
+        if self.previously_selected_songs:
+            self.restore_selected_songs()
+        
+    def create_widgets(self):
+        # Main container
+        main_frame = tk.Frame(self, bg='#121212', padx=20, pady=20)
+        main_frame.pack(fill='both', expand=True)
+        
+        # Header
+        title_label = tk.Label(main_frame,
+                           text="Select Songs and Order",
+                           font=('Segoe UI', 18, 'bold'),
+                           fg='#1e90ff',
+                           bg='#121212')
+        title_label.pack(pady=(0, 20))
+        
+        # Search field
+        search_frame = tk.Frame(main_frame, bg='#121212')
+        search_frame.pack(fill='x', pady=(0, 10))
+        
+        search_icon = tk.Label(search_frame, text="🔍", font=('Segoe UI', 12), fg='white', bg='#121212')
+        search_icon.pack(side='left', padx=(0, 5))
+        
+        self.search_var = tk.StringVar()
+        self.search_var.trace("w", self.filter_songs)
+        
+        search_entry = tk.Entry(search_frame,
+                              textvariable=self.search_var,
+                              font=('Segoe UI', 12),
+                              bg='#2a2a2a',
+                              fg='white',
+                              insertbackground='white',
+                              relief='flat',
+                              highlightthickness=1,
+                              highlightbackground='#1e90ff',
+                              highlightcolor='#1e90ff')
+        search_entry.pack(side='left', fill='x', expand=True)
+        
+        # Upper container (song list)
+        list_frame = tk.Frame(main_frame, bg='#121212')
+        list_frame.pack(fill='both', expand=True, pady=10)
+        
+        # Left side - all songs
+        left_frame = tk.Frame(list_frame, bg='#121212')
+        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 10))
+        
+        songs_label = tk.Label(left_frame, 
+                            text="Available Songs", 
+                            font=('Segoe UI', 14, 'bold'), 
+                            fg='white', 
+                            bg='#121212')
+        songs_label.pack(anchor='w', pady=(0, 5))
+        
+        songs_frame = tk.Frame(left_frame, bg='#1e1e1e', bd=0)
+        songs_frame.pack(fill='both', expand=True)
+        
+        self.songs_listbox = tk.Listbox(songs_frame,
+                                     bg='#1e1e1e',
+                                     fg='white',
+                                     selectbackground='#1e90ff',
+                                     font=('Segoe UI', 12),
+                                     bd=0,
+                                     highlightthickness=0,
+                                     activestyle='none',
+                                     selectmode=tk.MULTIPLE)
+        self.songs_listbox.pack(side='left', fill='both', expand=True)
+        
+        songs_scrollbar = tk.Scrollbar(songs_frame, command=self.songs_listbox.yview)
+        songs_scrollbar.pack(side='right', fill='y')
+        self.songs_listbox.config(yscrollcommand=songs_scrollbar.set)
+        
+        # Middle part - control buttons
+        mid_frame = tk.Frame(list_frame, bg='#121212')
+        mid_frame.pack(side='left', padx=10)
+        
+        add_btn = CustomButton(mid_frame, text="→", command=self.add_selected_songs, width=50, height=40)
+        add_btn.pack(pady=5)
+        
+        remove_btn = CustomButton(mid_frame, text="←", command=self.remove_selected_songs, width=50, height=40)
+        remove_btn.pack(pady=5)
+        
+        # Right side - selected songs with control buttons
+        right_frame = tk.Frame(list_frame, bg='#121212')
+        right_frame.pack(side='left', fill='both', expand=True, padx=(10, 0))
+        
+        playlist_label = tk.Label(right_frame, 
+                               text="Selected Songs", 
+                               font=('Segoe UI', 14, 'bold'), 
+                               fg='white', 
+                               bg='#121212')
+        playlist_label.pack(anchor='w', pady=(0, 5))
+        
+        # Container for playlist and order buttons
+        playlist_control_frame = tk.Frame(right_frame, bg='#121212')
+        playlist_control_frame.pack(fill='both', expand=True)
+        
+        # Playlist frame
+        playlist_frame = tk.Frame(playlist_control_frame, bg='#1e1e1e', bd=0)
+        playlist_frame.pack(side='left', fill='both', expand=True)
+        
+        self.playlist_listbox = tk.Listbox(playlist_frame,
+                                        bg='#1e1e1e',
+                                        fg='white',
+                                        selectbackground='#1e90ff',
+                                        font=('Segoe UI', 12),
+                                        bd=0,
+                                        highlightthickness=0,
+                                        activestyle='none')
+        self.playlist_listbox.pack(side='left', fill='both', expand=True)
+        
+        playlist_scrollbar = tk.Scrollbar(playlist_frame, command=self.playlist_listbox.yview)
+        playlist_scrollbar.pack(side='right', fill='y')
+        self.playlist_listbox.config(yscrollcommand=playlist_scrollbar.set)
+        
+        # Order control buttons - moved to be next to the selected songs box
+        order_frame = tk.Frame(playlist_control_frame, bg='#121212', padx=10)
+        order_frame.pack(side='left', fill='y')
+        
+        move_up_btn = CustomButton(order_frame, text="↑ Up", command=self.move_up, width=120, height=40)
+        move_up_btn.pack(pady=5)
+        
+        move_down_btn = CustomButton(order_frame, text="↓ Down", command=self.move_down, width=120, height=40)
+        move_down_btn.pack(pady=5)
+        
+        move_top_btn = CustomButton(order_frame, text="↑↑ Top", command=self.move_to_top, width=120, height=40)
+        move_top_btn.pack(pady=5)
+        
+        move_bottom_btn = CustomButton(order_frame, text="↓↓ Bottom", command=self.move_to_bottom, width=120, height=40)
+        move_bottom_btn.pack(pady=5)
+        
+        shuffle_btn = CustomButton(order_frame, text="🔀 Shuffle", command=self.shuffle_playlist, width=120, height=40)
+        shuffle_btn.pack(pady=5)
+        
+        # Bottom buttons
+        bottom_frame = tk.Frame(main_frame, bg='#121212')
+        bottom_frame.pack(fill='x', pady=(20, 0))
+        
+        confirm_btn = CustomButton(bottom_frame, 
+                                text="✅ Confirm", 
+                                command=self.confirm_selection, 
+                                width=200, 
+                                height=50)
+        confirm_btn.pack(side='left', padx=10)
+        
+        cancel_btn = CustomButton(bottom_frame, 
+                               text="❌ Cancel", 
+                               command=self.cancel, 
+                               width=150, 
+                               height=50)
+        cancel_btn.pack(side='left', padx=10)
+    
+        # Information label
+        self.info_label = tk.Label(main_frame,
+                                text="Selected: 0 songs",
+                                font=('Segoe UI', 12),
+                                fg='#1e90ff',
+                                bg='#121212')
+        self.info_label.pack(pady=(10, 0))
+    
+    def load_songs(self):
+        """Užkrauna visas MP3 dainas iš pasirinkto aplanko"""
+        if not self.input_folder or not os.path.exists(self.input_folder):
+            messagebox.showerror("Klaida", "Prašome pasirinkti įvesties aplanką!")
+            self.destroy()
+            return
+            
+        # Išvalyti sąrašus
+        self.all_songs = []
+        self.songs_listbox.delete(0, tk.END)
+        
+        # Gauti sąrašą MP3 failų
+        mp3_files = [f for f in os.listdir(self.input_folder) if f.lower().endswith('.mp3')]
+        
+        # Sukurti dainos objektus
+        for mp3_file in mp3_files:
+            display_name = self.clean_filename(mp3_file)
+            self.all_songs.append({"filename": mp3_file, "display": display_name})
+            self.songs_listbox.insert(tk.END, display_name)
+    
+    def filter_songs(self, *args):
+        """Filtruoja dainas pagal paieškos tekstą"""
+        search_text = self.search_var.get().lower()
+        
+        # Išvalyti sąrašą
+        self.songs_listbox.delete(0, tk.END)
+        
+        # Pridėti filtruotas dainas
+        for song in self.all_songs:
+            if search_text in song["display"].lower():
+                self.songs_listbox.insert(tk.END, song["display"])
+    
+    def add_selected_songs(self):
+        """Prideda pasirinktas dainas į grojaraštį"""
+        selected_indices = self.songs_listbox.curselection()
+        
+        if not selected_indices:
+            return
+            
+        # Eiti per visus pasirinktus indeksus
+        for index in selected_indices:
+            display_name = self.songs_listbox.get(index)
+            
+            # Rasti atitinkamą failą
+            for song in self.all_songs:
+                if song["display"] == display_name and song["filename"] not in self.selected_songs:
+                    self.selected_songs.append(song["filename"])
+                    self.playlist_listbox.insert(tk.END, display_name)
+                    break
+        
+        # Atnaujinti informacijos etiketę
+        self.update_info_label()
+    
+    def remove_selected_songs(self):
+        """Pašalina pasirinktas dainas iš grojaraščio"""
+        selected_indices = self.playlist_listbox.curselection()
+        
+        if not selected_indices:
+            return
+            
+        # Eiti per indeksus nuo galo, kad išvengti indeksų pokyčių
+        for index in sorted(selected_indices, reverse=True):
+            filename = self.selected_songs[index]
+            self.selected_songs.pop(index)
+            self.playlist_listbox.delete(index)
+        
+        # Atnaujinti informacijos etiketę
+        self.update_info_label()
+    
+    def move_up(self):
+        """Perkelia pasirinktą dainą aukštyn"""
+        selected = self.playlist_listbox.curselection()
+        
+        if not selected or selected[0] == 0:
+            return
+            
+        idx = selected[0]
+        
+        # Išsaugoti pasirinktos dainos duomenis
+        filename = self.selected_songs[idx]
+        display_name = self.playlist_listbox.get(idx)
+        
+        # Pašalinti iš dabartinės pozicijos
+        self.selected_songs.pop(idx)
+        self.playlist_listbox.delete(idx)
+        
+        # Įterpti naujoje pozicijoje
+        new_idx = idx - 1
+        self.selected_songs.insert(new_idx, filename)
+        self.playlist_listbox.insert(new_idx, display_name)
+        
+        # Pažymėti dainą naujoje pozicijoje
+        self.playlist_listbox.selection_clear(0, tk.END)
+        self.playlist_listbox.selection_set(new_idx)
+        self.playlist_listbox.see(new_idx)
+    
+    def move_down(self):
+        """Perkelia pasirinktą dainą žemyn"""
+        selected = self.playlist_listbox.curselection()
+        
+        if not selected or selected[0] == self.playlist_listbox.size() - 1:
+            return
+            
+        idx = selected[0]
+        
+        # Išsaugoti pasirinktos dainos duomenis
+        filename = self.selected_songs[idx]
+        display_name = self.playlist_listbox.get(idx)
+        
+        # Pašalinti iš dabartinės pozicijos
+        self.selected_songs.pop(idx)
+        self.playlist_listbox.delete(idx)
+        
+        # Įterpti naujoje pozicijoje
+        new_idx = idx + 1
+        self.selected_songs.insert(new_idx, filename)
+        self.playlist_listbox.insert(new_idx, display_name)
+        
+        # Pažymėti dainą naujoje pozicijoje
+        self.playlist_listbox.selection_clear(0, tk.END)
+        self.playlist_listbox.selection_set(new_idx)
+        self.playlist_listbox.see(new_idx)
+    
+    def move_to_top(self):
+        """Perkelia pasirinktą dainą į sąrašo viršų"""
+        selected = self.playlist_listbox.curselection()
+        
+        if not selected or selected[0] == 0:
+            return
+            
+        idx = selected[0]
+        
+        # Išsaugoti pasirinktos dainos duomenis
+        filename = self.selected_songs[idx]
+        display_name = self.playlist_listbox.get(idx)
+        
+        # Pašalinti iš dabartinės pozicijos
+        self.selected_songs.pop(idx)
+        self.playlist_listbox.delete(idx)
+        
+        # Įterpti naujoje pozicijoje
+        new_idx = 0
+        self.selected_songs.insert(new_idx, filename)
+        self.playlist_listbox.insert(new_idx, display_name)
+        
+        # Pažymėti dainą naujoje pozicijoje
+        self.playlist_listbox.selection_clear(0, tk.END)
+        self.playlist_listbox.selection_set(new_idx)
+        self.playlist_listbox.see(new_idx)
+    
+    def move_to_bottom(self):
+        """Perkelia pasirinktą dainą į sąrašo apačią"""
+        selected = self.playlist_listbox.curselection()
+        
+        if not selected or selected[0] == self.playlist_listbox.size() - 1:
+            return
+            
+        idx = selected[0]
+        
+        # Išsaugoti pasirinktos dainos duomenis
+        filename = self.selected_songs[idx]
+        display_name = self.playlist_listbox.get(idx)
+        
+        # Pašalinti iš dabartinės pozicijos
+        self.selected_songs.pop(idx)
+        self.playlist_listbox.delete(idx)
+        
+        # Įterpti naujoje pozicijoje
+        self.selected_songs.append(filename)
+        self.playlist_listbox.insert(tk.END, display_name)
+        
+        # Pažymėti dainą naujoje pozicijoje
+        new_idx = self.playlist_listbox.size() - 1
+        self.playlist_listbox.selection_clear(0, tk.END)
+        self.playlist_listbox.selection_set(new_idx)
+        self.playlist_listbox.see(new_idx)
+    
+    def shuffle_playlist(self):
+        """Sumaišo dainų tvarką atsitiktine tvarka"""
+        if len(self.selected_songs) < 2:
+                return
+                
+        # Išsaugoti dabartinę dainų tvarką
+        current_order = list(zip(self.selected_songs, 
+                               [self.playlist_listbox.get(i) for i in range(self.playlist_listbox.size())]))
+        
+        # Sumaišyti tvarką
+        random.shuffle(current_order)
+        
+        # Atnaujinti sąrašus
+        self.selected_songs = [item[0] for item in current_order]
+        self.playlist_listbox.delete(0, tk.END)
+        
+        for item in current_order:
+            self.playlist_listbox.insert(tk.END, item[1])
+    
+    def update_info_label(self):
+        """Atnaujina informacijos etiketę"""
+        count = len(self.selected_songs)
+        self.info_label.config(text=f"Selected: {count} songs")
+    
+    def confirm_selection(self):
+        """Patvirtina pasirinktų dainų tvarką"""
+        if not self.selected_songs:
+            messagebox.showwarning("Warning", "You haven't selected any songs!")
+            return
+                
+        # Perduoti pasirinktų dainų sąrašą
+        self.selected_callback(self.selected_songs)
+        self.destroy()
+    
+    def cancel(self):
+        """Atšaukia dainų pasirinkimą"""
+        self.destroy()
+    
+    def clean_filename(self, filename):
+        """Suformuoja gražų dainos pavadinimą iš failo pavadinimo"""
+        # Pašalinti .mp3 plėtinį
+        name = os.path.splitext(filename)[0]
+        
+        # Pašalinti numeraciją iš pradžios
+        name = re.sub(r'^\d+[\.\-\s_]+', '', name)
+        
+        # Pakeisti _ ir - simbolius tarpais
+        name = name.replace('_', ' ').replace('-', ' ')
+        
+        # Pašalinti kelis tarpus iš eilės
+        name = re.sub(r'\s+', ' ', name)
+        
+        return name.strip()
+
+    def restore_selected_songs(self):
+        """Atkuria anksčiau pasirinktas dainas iš saugomo sąrašo"""
+        # Pridėti anksčiau pasirinktas dainas į naują sąrašą
+        for filename in self.previously_selected_songs:
+            # Rasti atitinkamą display_name pagal filename
+            display_name = None
+            for song in self.all_songs:
+                if song["filename"] == filename:
+                    display_name = song["display"]
+                    break
+            
+            # Jei radome display_name, pridėti į pasirinktųjų sąrašą
+            if display_name:
+                self.selected_songs.append(filename)
+                self.playlist_listbox.insert(tk.END, display_name)
+        
+        # Atnaujinti informacijos etiketę
+        self.update_info_label()
+
 class AudioCombinerGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Audio Combiner")
         
-        # Set window size to 1920x1080 and center it
-        window_width = 1920
-        window_height = 1080
-        
-        # Get screen dimensions
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        
-        # Calculate position coordinates
-        x = (screen_width/2) - (window_width/2)
-        y = (screen_height/2) - (window_height/2)
-        
-        # Set window size and position
-        self.root.geometry(f'{window_width}x{window_height}+{int(x)}+{int(y)}')
+        # Set to maximize mode
+        self.root.state('zoomed')
         self.root.configure(bg='#000000')
         
         # Variables
@@ -139,6 +564,10 @@ class AudioCombinerGUI:
         self.output_filename = tk.StringVar(value="combined_output.mp3")
         self.num_files = tk.StringVar(value="20")
         self.status = tk.StringVar(value="Ready")
+        
+        # Song selection
+        self.selected_songs = []
+        self.use_selected_songs = tk.BooleanVar(value=False)
         
         # Tracklist variables
         self.tracklist = []
@@ -303,44 +732,112 @@ class AudioCombinerGUI:
                                         activebackground='#000000')
         tracklist_check.pack()
         
-        # Process button with nice modern styling
-        process_frame = tk.Frame(main_frame, bg='#000000')
-        process_frame.pack(pady=(20, 40))
+        # Song selection button
+        songs_selection_frame = tk.Frame(main_frame, bg='#000000')
+        songs_selection_frame.pack(pady=(0, 20))
         
-        process_btn = CustomButton(process_frame,
+        # Checkbox for using selected songs
+        self.use_selected_check = tk.Checkbutton(songs_selection_frame,
+                                        text="Use Selected Songs",
+                                        variable=self.use_selected_songs,
+                                        font=('Segoe UI', 14),
+                                        fg='white',
+                                        bg='#000000',
+                                        selectcolor='#2a2a2a',
+                                        activeforeground='white',
+                                        activebackground='#000000')
+        self.use_selected_check.pack()
+        
+        # Selection button
+        select_songs_btn = CustomButton(songs_selection_frame,
+                                       text="Select Songs",
+                                       command=self.open_song_selection,
+                                       width=180,
+                                       height=50)
+        select_songs_btn.pack(pady=10)
+        
+        # Selected songs label
+        self.selected_count_label = tk.Label(songs_selection_frame,
+                                          text="Selected songs: 0",
+                                          font=('Segoe UI', 12),
+                                          fg='white',
+                                          bg='#000000')
+        self.selected_count_label.pack()
+        
+        # Bottom frame for process button and custom song
+        bottom_frame = tk.Frame(main_frame, bg='#000000')
+        bottom_frame.pack(fill='x', pady=(20, 40))
+        
+        # Process button
+        process_btn = CustomButton(bottom_frame,
                                  text="Process",
                                  command=self.process_audio,
                                  width=200,
                                  height=60)
-        process_btn.pack()
+        process_btn.pack(side='left')
         
-    def browse_input(self):
-        folder = filedialog.askdirectory()
-        if folder:
-            self.input_folder.set(folder)
+        # Custom song button (bottom right)
+        custom_song_btn = CustomButton(bottom_frame,
+                                     text="Add Custom Song",
+                                     command=self.add_custom_song,
+                                     width=200,
+                                     height=60)
+        custom_song_btn.pack(side='right', padx=20)
+        
+    def open_song_selection(self):
+        """Opens song selection window"""
+        input_folder = self.input_folder.get()
+        
+        if not input_folder:
+            messagebox.showerror("Error", "Please select input folder!")
+            return
             
-    def browse_output_folder(self):
-        folder = filedialog.askdirectory()
-        if folder:
-            self.output_folder.set(folder)
+        if not os.path.exists(input_folder):
+            messagebox.showerror("Error", "Input folder does not exist!")
+            return
             
-    def load_export_counter(self):
-        """Įkelti eksportavimo skaitliuką iš failo arba pradėti nuo 1"""
-        try:
-            if os.path.exists(self.export_counter_file):
-                with open(self.export_counter_file, "r") as f:
-                    return int(f.read().strip())
-            return 1
-        except:
-            return 1
-    
-    def save_export_counter(self):
-        """Išsaugoti eksportavimo skaitliuką į failą"""
-        try:
-            with open(self.export_counter_file, "w") as f:
-                f.write(str(self.export_counter))
-        except:
-            pass
+        # Open modern song selector and pass currently selected songs
+        song_selection = ModernSongSelector(self.root, input_folder, 
+                                          self.update_selected_songs,
+                                          current_selected_songs=self.selected_songs)
+        
+    def update_selected_songs(self, selected_songs):
+        """Updates selected songs list from song selection window"""
+        self.selected_songs = selected_songs
+        self.selected_count_label.config(text=f"Selected songs: {len(selected_songs)}")
+        
+        # Automatically enable selected songs
+        if selected_songs:
+            self.use_selected_songs.set(True)
+            
+    def add_custom_song(self):
+        """Adds a custom song to the selection"""
+        custom_file = filedialog.askopenfilename(
+            title="Select Custom MP3 File",
+            filetypes=[("MP3 Files", "*.mp3")]
+        )
+        
+        if custom_file:
+            # Extract just the filename, not the full path
+            file_name = os.path.basename(custom_file)
+            
+            # Copy file to input folder if needed
+            input_folder = self.input_folder.get()
+            if input_folder:
+                # Check if we should copy the file
+                if os.path.dirname(custom_file) != input_folder:
+                    try:
+                        import shutil
+                        shutil.copy2(custom_file, os.path.join(input_folder, file_name))
+                        messagebox.showinfo("Success", f"File '{file_name}' copied to input folder")
+                    except Exception as e:
+                        messagebox.showerror("Error", f"Could not copy file: {str(e)}")
+            
+            # Add to selected songs
+            if file_name not in self.selected_songs:
+                self.selected_songs.append(file_name)
+                self.selected_count_label.config(text=f"Selected songs: {len(self.selected_songs)}")
+                self.use_selected_songs.set(True)
     
     def process_audio(self):
         try:
@@ -350,16 +847,6 @@ class AudioCombinerGUI:
             # Naudojame numeruojamą pavadinimą
             output_filename = f"Exported_Mix_{self.export_counter}.mp3"
             tracklist_filename = f"TimeStamps_Exported_Mix_{self.export_counter}.txt"
-            
-            # Validate number of files
-            try:
-                num_files = int(self.num_files.get())
-                if num_files <= 0:
-                    messagebox.showerror("Error", "Number of songs must be positive!")
-                    return
-            except ValueError:
-                messagebox.showerror("Error", "Number of songs must be a number!")
-                return
             
             if not input_folder or not output_folder:
                 messagebox.showerror("Error", "Please select input and output folders!")
@@ -375,13 +862,32 @@ class AudioCombinerGUI:
             if not mp3_files:
                 messagebox.showerror("Error", "No MP3 files found in the input folder!")
                 return
+            
+            # Pasirinkti dainas
+            if self.use_selected_songs.get() and self.selected_songs:
+                # Naudoti pasirinktas dainas
+                selected_files = self.selected_songs
+                num_files = len(selected_files)
+            else:
+                # Validate number of files for random selection
+                try:
+                    num_files = int(self.num_files.get())
+                    if num_files <= 0:
+                        messagebox.showerror("Error", "Number of songs must be positive!")
+                        return
+                except ValueError:
+                    messagebox.showerror("Error", "Number of songs must be a number!")
+                    return
+                    
+                if num_files > len(mp3_files):
+                    messagebox.showwarning("Warning", 
+                        f"Selected number of songs ({num_files}) is greater than available files ({len(mp3_files)}). "
+                        f"Using all available files.")
+                    num_files = len(mp3_files)
                 
-            if num_files > len(mp3_files):
-                messagebox.showwarning("Warning", 
-                    f"Selected number of songs ({num_files}) is greater than available files ({len(mp3_files)}). "
-                    f"Using all available files.")
-                num_files = len(mp3_files)
-                
+                # Atsitiktinai pasirinkti failus
+                selected_files = random.sample(mp3_files, num_files)
+            
             # Update status
             self.status.set("Processing...")
             self.root.update()
@@ -389,9 +895,6 @@ class AudioCombinerGUI:
             # Sukurti tracklist'o kintamuosius
             self.tracklist = []
             current_position_ms = 0
-            
-            # Atsitiktinai pasirinkti failus
-            selected_files = random.sample(mp3_files, num_files)
             
             # Inicializuoti bendrą audio
             combined_segment = None
@@ -495,6 +998,34 @@ class AudioCombinerGUI:
         # Pašalina bet kokį skaičių pradžioje (pvz., "15 ", "123 ", ir t.t.)
         cleaned_name = re.sub(r'^\d+\s+', '', cleaned_name)
         return cleaned_name
+
+    def browse_input(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.input_folder.set(folder)
+            
+    def browse_output_folder(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.output_folder.set(folder)
+            
+    def load_export_counter(self):
+        """Įkelti eksportavimo skaitliuką iš failo arba pradėti nuo 1"""
+        try:
+            if os.path.exists(self.export_counter_file):
+                with open(self.export_counter_file, "r") as f:
+                    return int(f.read().strip())
+            return 1
+        except:
+            return 1
+    
+    def save_export_counter(self):
+        """Išsaugoti eksportavimo skaitliuką į failą"""
+        try:
+            with open(self.export_counter_file, "w") as f:
+                f.write(str(self.export_counter))
+        except:
+            pass
 
 def trim_silence_with_pydub(audio_segment, silence_threshold=-40, min_silence_len=100):
     """
